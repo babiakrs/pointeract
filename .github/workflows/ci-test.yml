@@ -1,0 +1,54 @@
+name: CI for Tests
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - src/**
+      - test/**
+  push:
+    branches: [main]
+    paths:
+      - src/**
+      - test/**
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-slim
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4.2.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: latest
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Run tests (pull requests)
+        if: github.event_name == 'pull_request'
+        run: pnpm test
+
+      - name: Run coverage tests (push to main)
+        if: github.event_name == 'push'
+        run: pnpm test:coverage
+
+      - name: Upload coverage reports to Codecov (push to main)
+        if: github.event_name == 'push'
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
