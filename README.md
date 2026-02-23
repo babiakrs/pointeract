@@ -5,7 +5,7 @@
   <br>
 </h1>
 
-<h4 align="center"> modern, lightweight, robust and extensible human gesture recognizer </h4>
+<h4 align="center"> 🖱️🤏 lightweight, robust and extensible human gesture detector </h4>
 
 <p align="center">
     <a href="https://github.com/hesprs/pointeract/actions">
@@ -22,6 +22,9 @@
     </a>
     <a href="https://www.npmjs.com/package/pointeract">
         <img src="https://img.shields.io/npm/v/pointeract?logo=npm&labelColor=red&logoColor=white&color=333333" alt="npm package" />
+    </a>
+    <a href="https://jsr.io/@hesprs/pointeract">
+        <img src="https://img.shields.io/jsr/v/@hesprs/pointeract?logo=jsr&labelColor=f7df1e&logoColor=white&color=333333" alt="JSR package" />
     </a>
     <a href="https://snyk.io/test/npm/pointeract">
         <img src="https://img.shields.io/badge/Snyk%20Security-Monitored-333333?logo=snyk&style=flat&labelColor=8A2BE2&logoColor=white" alt="library security" />
@@ -65,13 +68,19 @@ Install Pointeract using your favorite package manager:
 
 ```sh
 # npm
-$ npm add pointeract
+npm add pointeract
 
 # pnpm
-$ pnpm add pointeract
+pnpm add pointeract
 
 # yarn
-$ yarn add pointeract
+yarn add pointeract
+
+# bun
+bun add pointeract
+
+# deno
+deno add jsr:@hesprs/pointeract
 ```
 
 Or include the following lines directly in your HTML file:
@@ -89,7 +98,7 @@ Then simply grab the core class and a module:
 ```TypeScript
 import { Pointeract, Drag } from 'pointeract';
 
-new Pointeract({ element: yourElement }, Drag)
+new Pointeract({ element: yourElement }, [Drag])
     .start()
     .on('drag', e => console.log(e));
 ```
