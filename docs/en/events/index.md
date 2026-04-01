@@ -10,3 +10,4 @@ The following events are parts of Pointeract standard schema:
 |       [`pan`](/events/drag)       | move the viewport in a canvas APP             |
 |      [`zoom`](/events/drag)       | change the scale of elements / an element     |
 | [`trueClick`](/events/true-click) | perform a simple click on an element          |
+|     [`swipe`](/events/swipe)      | perform a swipe on an element                 |

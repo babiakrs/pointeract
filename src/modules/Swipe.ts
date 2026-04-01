@@ -2,32 +2,36 @@ import type { BaseOptions, Pointer, Pointers } from '@/types';
 import BaseModule from '@/BaseModule';
 import { getLast } from '@/utils';
 
-/* TODO
-Seems that swipe detection processes swipe at per-pointer level. Consider adding multiple-pointer-single-swipe detection (my sketchy mental model, reference only):
-
-- add a new field pointerNumber in swipe event to record number of pointers involved in one swipe.
-- keep each pointer in the swipe pointer array for a short time even after pointerUp.
-- emit events with pointerNumber: 1 for all pointer swipes.
-- during pointerUp check swipe pointer array to find similar pointer swipes, if found, emit another event with pointerNumber: <more than 1>.
-- that is to say, a swipe caused by a pointer can emit multiple swipe events if similar patterns are found.
-
-- Expose more information in swipe event, like duration, displacement and extend the direction to eight directions if possible.
-*/
-
 interface Options extends BaseOptions {
-	minDistance?: number;
-	minVelocity?: number;
-	velocityWindow?: number;
-	pointers?: number;
+	swipeMinDistance?: number;
+	swipeMinVelocity?: number;
+	swipeVelocityWindow?: number;
+	swipeStreakWindow?: number;
+	swipeDirectionMap?: Record<string, number>;
 }
 
-type Direction = 'left' | 'right' | 'up' | 'down';
+type ProcessedSwipe = {
+	direction: string;
+	velocity: number;
+	duration: number;
+	angle: number;
+	displacement: number;
+};
+
+type CompletedSwipe = ProcessedSwipe & { completedAt: number };
+
+const defaultDirectionMap = {
+	left: -(Math.PI / 4) * 3, // -135 degrees
+	down: -Math.PI / 4, // -45 degrees
+	right: Math.PI / 4, // 45 degrees
+	up: (Math.PI / 4) * 3, // 135 degrees
+};
 
 export default class Swipe extends BaseModule<Options> {
-	#gesturePointers: Array<Pointer['records']> = [];
+	#buffer: Array<CompletedSwipe> = [];
 
 	onPointerDown = (_e: PointerEvent, _pointer: Pointer, pointers: Pointers) => {
-		if (pointers.size === 1) this.#gesturePointers = [];
+		if (pointers.size === 1) this.#buffer = [];
 	};
 
 	#processPointer(
@@ -35,17 +39,28 @@ export default class Swipe extends BaseModule<Options> {
 		minDistance: number,
 		minVelocity: number,
 		velocityWindow: number,
-	): { direction: Direction; velocity: number } | null {
+	): ProcessedSwipe | null {
 		if (records.length < 2) return null;
 
 		const first = records[0];
 		const last = getLast(records);
 		const dx = last.x - first.x;
 		const dy = last.y - first.y;
-		if (Math.sqrt(dx * dx + dy * dy) < minDistance) return null;
+		const displacement = Math.sqrt(dx * dx + dy * dy);
+		if (displacement < minDistance) return null;
 
-		const direction: Direction =
-			Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : dy > 0 ? 'down' : 'up';
+		const angle = Math.atan2(-dy, dx); // specially invert dy to for standard Cartesian displacements
+
+		const directionMap = this.options.swipeDirectionMap ?? defaultDirectionMap;
+		let direction = Object.keys(directionMap)[0];
+		for (const [key, value] of Object.entries(directionMap)) {
+			if (angle <= value) {
+				direction = key;
+				break;
+			}
+		}
+
+		const duration = last.timestamp - first.timestamp;
 
 		const windowRecords = records.filter((r) => r.timestamp >= last.timestamp - velocityWindow);
 		let velocity = 0;
@@ -59,35 +74,61 @@ export default class Swipe extends BaseModule<Options> {
 		}
 		if (velocity < minVelocity) return null;
 
-		return { direction, velocity };
+		return { direction, velocity, duration, displacement, angle };
 	}
 
-	onPointerUp = (_e: PointerEvent, pointer: Pointer, pointers: Pointers) => {
-		this.#gesturePointers.push(pointer.records);
+	onPointerUp = (_e: PointerEvent, pointer: Pointer, _pointers: Pointers) => {
+		const minDistance = this.options.swipeMinDistance ?? 10;
+		const minVelocity = this.options.swipeMinVelocity ?? 0.1;
+		const velocityWindow = this.options.swipeVelocityWindow ?? 200;
+		const groupingWindow = this.options.swipeStreakWindow ?? 400;
 
-		if (pointers.size > 0) return;
-		if (this.#gesturePointers.length < (this.options.pointers ?? 1)) return;
+		const result = this.#processPointer(
+			pointer.records,
+			minDistance,
+			minVelocity,
+			velocityWindow,
+		);
+		if (!result) return;
+		const now = Date.now();
 
-		const minDistance = this.options.minDistance ?? 10;
-		const minVelocity = this.options.minVelocity ?? 0.1;
-		const velocityWindow = this.options.velocityWindow ?? 100;
+		this.#buffer = this.#buffer.filter((s) => now - s.completedAt <= groupingWindow);
+		const similar = this.#buffer.filter((s) => s.direction === result.direction);
+		this.#buffer.push({ ...result, completedAt: now });
 
-		let direction: Direction | null = null;
-		let totalVelocity = 0;
-
-		for (const records of this.#gesturePointers) {
-			const result = this.#processPointer(records, minDistance, minVelocity, velocityWindow);
-			if (!result) return;
-			if (direction === null) direction = result.direction;
-			else if (direction !== result.direction) return;
-			totalVelocity += result.velocity;
-		}
-
-		if (!direction) return;
+		// Emit combined event when similar concurrent swipes exist
+		const allSwipes = [...similar, result];
+		const streak = allSwipes.length;
+		const avg = (fn: (s: ProcessedSwipe) => number) => {
+			if (streak === 1) return fn(allSwipes[0]);
+			return allSwipes.reduce((sum, s) => sum + fn(s), 0) / streak;
+		};
 
 		this.dispatch('swipe', {
-			direction,
-			velocity: totalVelocity / this.#gesturePointers.length,
+			direction: result.direction,
+			velocity: avg((s) => s.velocity),
+			streak,
+			angle: avg((s) => s.angle),
+			duration: avg((s) => s.duration),
+			displacement: avg((s) => s.displacement),
 		});
 	};
 }
+
+export const diagonalDirectionMap = {
+	'down-left': -Math.PI / 2, // -90 degrees
+	'down-right': 0, // 0 degrees
+	'up-right': Math.PI / 2, // 90 degrees
+	'up-left': Math.PI, // 180 degrees
+};
+
+export const eightDirectionMap = {
+	left: -(Math.PI / 8) * 7, // -157.5 degrees
+	'down-left': -(Math.PI / 8) * 5, // -112.5 degrees
+	down: -(Math.PI / 8) * 3, // -67.5 degrees
+	'down-right': -Math.PI / 8, // -25.5 degrees
+	right: Math.PI / 8, // 25.5 degrees
+	'up-right': (Math.PI / 8) * 3, // 67.5 degrees
+	up: (Math.PI / 8) * 5, // 112.5 degrees
+	'up-left': (Math.PI / 8) * 7, // 157.5 degrees
+};
